@@ -9,26 +9,24 @@ import torch
 import yaml
 from PIL import Image
 from torch.utils.data import DataLoader, Dataset
-from transformers import OwlViTProcessor
+
 import torchvision
 import os
 from torchvision.ops import box_convert as _box_convert
 from PIL import Image, ImageDraw
 
-TRAIN_ANNOTATIONS_FILE = "/home/yang/data/smoke-fire-person-dataset/person/VisDrone/train/train.json"
-TRAIN_IMAGES_PATH = "/home/yang/data/smoke-fire-person-dataset/person/VisDrone/train/images"
-TEST_ANNOTATIONS_FILE = "/home/yang/data/smoke-fire-person-dataset/person/VisDrone/test/test.json"
-TEST_IMAGES_PATH = "/home/yang/data/smoke-fire-person-dataset/person/VisDrone/test/images"
 
-class VisDroneDataset(torchvision.datasets.CocoDetection):
+
+class OwlDataset(torchvision.datasets.CocoDetection):
     def __init__(self, processor, img_folder, ann_file, train=True):
         self.ann_file = ann_file
-        super(VisDroneDataset, self).__init__(root = img_folder, annFile = ann_file)
+        super(OwlDataset, self).__init__(root = img_folder, annFile = ann_file)
         self.processor = processor
         with open(self.ann_file) as f:
             categories = json.load(f)["categories"]
         self.id2label = {category["id"]: category["name"] for category in categories}
         self.label2id = {v:k for k, v in self.id2label.items()}
+
     @staticmethod          
     def _box_xywh_to_cxcywh(
         boxes_batch: torch.tensor,  # [N, 4]
@@ -43,7 +41,7 @@ class VisDroneDataset(torchvision.datasets.CocoDetection):
 
     def _getinfo(self, cocoinfo, img):
         texts = ['a photo of ' + self.id2label[info['category_id']] for info in cocoinfo]
-        #  去重
+        #  dedupe
         texts = list(set(texts))
         h, w = img.size
         bboxes = []
@@ -56,7 +54,7 @@ class VisDroneDataset(torchvision.datasets.CocoDetection):
         return texts, bboxes , class_labels, areas
  
     def __getitem__(self, idx:int):
-        img, cocoinfo = super(VisDroneDataset, self).__getitem__(idx)
+        img, cocoinfo = super(OwlDataset, self).__getitem__(idx)
         texts, bboxes, class_labels, areas = self._getinfo(cocoinfo, img)
         image_id = self.ids[idx]
         h, w = img.size
@@ -100,7 +98,7 @@ class VisDroneDataset(torchvision.datasets.CocoDetection):
         return annotations
 
     def draw_annotation(self, idx: int, path:str):
-        img, cocoinfo = super(VisDroneDataset, self).__getitem__(idx)
+        img, cocoinfo = super(OwlDataset, self).__getitem__(idx)
         outputs = self.__getitem__(idx)
         annotations = self.formatted_anns(outputs['labels'])
         draw = ImageDraw.Draw(img, "RGBA")
@@ -113,9 +111,10 @@ class VisDroneDataset(torchvision.datasets.CocoDetection):
         img.save(f"{path}/{idx}.jpg")
 
 
-class VisDroneDataLoader(DataLoader):
+
+class OwlDataLoader(DataLoader):
     def __init__(self, dataset, batch_size, num_workers, device, shuffle):
-        super(VisDroneDataLoader, self).__init__(
+        super(OwlDataLoader, self).__init__(
             dataset, 
             batch_size=batch_size , 
             shuffle=shuffle, 
@@ -140,31 +139,34 @@ class VisDroneDataLoader(DataLoader):
         batch["labels"] = labels
         return batch
 
-def get_VisDrone_dataloaders(cfg, processor, device):
-    train_dataset = VisDroneDataset(
-                        processor, 
-                        img_folder=cfg['train_images_path'], 
-                        ann_file=cfg['train_annotations_path'])
+
+
+class LvisDataSet(OwlDataset):
+    def __init__(self, processor, img_folder, ann_file, train=True):
+        super(LvisDataSet, self).__init__(processor, img_folder, ann_file, train)
+        pass
     
-    test_dataset = VisDroneDataset(
-                        processor, 
-                        img_folder=cfg['train_images_path'],
-                        ann_file=cfg['test_annotations_path'], 
-                        train=False)
+
+
+
+
+
+def get_owl_dataloaders(cfg, processor, device):
+    train_dataset, test_dataset = get_datasets(cfg, processor)
     print("Number of training examples:", len(train_dataset))
     print("Number of testing examples:", len(test_dataset))
     
-    train_dataloader = VisDroneDataLoader(train_dataset,batch_size=cfg['batch_size'], shuffle=True, num_workers=1, device=device)
-    test_dataloader = VisDroneDataLoader(test_dataset,batch_size=cfg['batch_size'], shuffle=True, num_workers=1, device=device) 
+    train_dataloader = OwlDataLoader(train_dataset,batch_size=cfg['batch_size'], shuffle=True, num_workers=1, device=device)
+    test_dataloader = OwlDataLoader(test_dataset,batch_size=cfg['batch_size'], shuffle=True, num_workers=1, device=device) 
     return train_dataloader, test_dataloader
 
-def get_VisDrone_datasets(cfg, processor):
-    train_dataset = VisDroneDataset(
+def get_owl_datasets(cfg, processor):
+    train_dataset = OwlDataset(
                         processor, 
                         img_folder=cfg['train_images_path'], 
                         ann_file=cfg['train_annotations_path'])
     
-    test_dataset = VisDroneDataset(
+    test_dataset = OwlDataset(
                         processor, 
                         img_folder=cfg['train_images_path'],
                         ann_file=cfg['test_annotations_path'], 
@@ -172,26 +174,3 @@ def get_VisDrone_datasets(cfg, processor):
     print("Number of training examples:", len(train_dataset))
     print("Number of testing examples:", len(test_dataset))
     return train_dataset, test_dataset
-    
-
-if __name__ == '__main__':
-    cfg = {
-        "train_images_path": TRAIN_IMAGES_PATH,
-        "train_annotations_path": TRAIN_ANNOTATIONS_FILE,
-        "test_images_path": TEST_IMAGES_PATH,
-        "test_annotations_path": TEST_ANNOTATIONS_FILE,
-        "batch_size":4,
-        "project_path": "home/yang/zj/NLP"
-
-    }
-    os.environ['PYTHONPATH'] = cfg['project_path']
-    # bbox => x,y,w,h to cx,cy,w,h
-    torch.multiprocessing.set_start_method('spawn')
-    processor = OwlViTProcessor.from_pretrained("google/owlvit-base-patch32")
-    train_dataset = VisDroneDataset(processor=processor, img_folder=TRAIN_IMAGES_PATH, ann_file=TRAIN_ANNOTATIONS_FILE)
-    train_dataset.draw_annotation(110, path = 'output/')
-    device = torch.device('cuda') if torch.cuda.is_available() else "cpu"
-    train_dataloader, test_dataloader = get_VisDrone_dataloaders(cfg=cfg, processor=processor, device=device)
-    batch = next(iter(train_dataloader))
-    print(batch.keys())
-    print(batch)
