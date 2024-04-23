@@ -157,7 +157,7 @@ class HungarianMatcher(nn.Module):
             BoxUtils.box_cxcywh_to_xyxy(tgt_bbox)
         )
         # a [batch_size * num_queries, all_num_target_boxes] pairwise matrix
-        # cost_giou = -BoxUtils.generalized_box_iou(out_bbox,tgt_bbox)
+        
 
         # Final cost matrix
         C = (
@@ -171,8 +171,9 @@ class HungarianMatcher(nn.Module):
         
         indices = [
             linear_sum_assignment(c[i]) for i, c in enumerate(C.split(sizes, -1))
-            # C.split(sizes, -1)，在最后一个维度进行拆分，每个拆分的分量按照每个targets里面每个boxes的个数
-            # c [batch_size , num_queries, num_target_boxes]
+            # C.split(sizes, -1)，
+            # c [batch_size , num_queries, num_target_boxes] Splits are performed in the last dimension, 
+            # and each split is divided according to the number of each boxes inside each targets
             # i batch_num - 1
         ]
         # indices list [batch_size] 

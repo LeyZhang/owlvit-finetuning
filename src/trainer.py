@@ -34,13 +34,15 @@ class CustomTrainer(Trainer):
     def custom_loss(self, outputs, labels):
         num_classes = 1
         matcher = HungarianMatcher(cost_class = 1, cost_bbox = 5, cost_giou = 2)
-        # weight_dict = {'loss_ce': 1, 'loss_bbox': 5, 'loss_giou': 2}
-        # losses_dict = ['labels', 'boxes', 'cardinality']
-        weight_dict = {'loss_bbox': 5, 'loss_giou': 2}
-        losses_dict = ['boxes', 'cardinality']
+        weight_dict = {'loss_ce': 1, 'loss_bg': 1, 'loss_bbox': 5, 'loss_giou': 2}
+        losses_dict = ['labels', 'boxes', 'cardinality']
         criterion = OWLVitLoss(num_classes, matcher=matcher, weight_dict=weight_dict, eos_coef=0.1, losses_dict=losses_dict)
         criterion.to(self.device)
-        mean_loss, losses = criterion(outputs, labels)
+        torch.save(outputs, 'output/logs/outputs.pt')
+        torch.save(labels, 'output/logs/labels.pt')
+        torch.save(matcher, 'output/logs/matcher.pt')
+        losses = criterion(outputs, labels)
+        mean_loss = (losses['loss_ce'] + losses['loss_bbox'] + losses['loss_giou']+ losses['loss_bg']).squeeze()
         return mean_loss, losses
 
     def compute_loss(self, model, inputs, return_outputs=False):
@@ -52,10 +54,11 @@ class CustomTrainer(Trainer):
             num_max_text_queris, sequence_length = inputs["input_ids"].shape
 
         inputs["input_ids"] = inputs["input_ids"].view(batch_size * num_max_text_queris, sequence_length)
-        inputs["attention_mask"] = inputs["attention_mask"].view(batch_size*num_max_text_queris, sequence_length)
+        inputs["attention_mask"] = inputs["attention_mask"].view(batch_size * num_max_text_queris, sequence_length)
         outputs= model(**inputs, return_dict=True)
 
         mean_loss, losses = self.custom_loss(outputs, labels)
         print(losses)
+        
         return (mean_loss, outputs) if return_outputs else mean_loss
 
