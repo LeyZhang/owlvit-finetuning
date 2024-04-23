@@ -8,8 +8,8 @@ from transformers import (
 import torch
 import os
 from src.dataset import (
-    get_VisDrone_dataloaders,
-    get_VisDrone_datasets
+    get_owl_dataloaders,
+    get_owl_datasets
 )
 from src.trainer import CustomTrainer
 
@@ -71,7 +71,7 @@ if __name__ == '__main__':
     # bbox => cx,cy,width,height
     model = OwlViTForObjectDetection.from_pretrained("google/owlvit-base-patch32")
     processor = OwlViTProcessor.from_pretrained("google/owlvit-base-patch32")
-    train_dataset, test_dataset = get_VisDrone_datasets(cfg=cfg, processor=processor)
+    train_dataset, test_dataset = get_owl_datasets(cfg=cfg, processor=processor)
 
 
     training_args = TrainingArguments(
