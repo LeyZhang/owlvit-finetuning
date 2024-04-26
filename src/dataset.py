@@ -90,7 +90,7 @@ class OwlDataset(CocoDataset):
             bbox = torch.Tensor(info['bbox'])*torch.tensor([1/w, 1/h, 1/w, 1/h], dtype=torch.float32)
             bboxes.append(bbox)
         bboxes = torch.stack(bboxes,0)
-        class_labels = [info['category_id']-1 for info in cocoinfo]
+        class_labels = [info['category_id'] for info in cocoinfo]
         areas = [info['area'] for info in cocoinfo]
         return texts, bboxes , class_labels, areas
  
@@ -118,11 +118,9 @@ class OwlDataset(CocoDataset):
         }
 
 
-class LvisDataSet(CocoDataset):
+class LvisDataSet(OwlDataset):
     def __init__(self, processor, img_folder, ann_file, train=True):
-        super(LvisDataSet, self).__init__(img_folder=img_folder, ann_file= ann_file)
-        self.processor = processor
-        pass
+        super(LvisDataSet, self).__init__(processor, img_folder=img_folder, ann_file= ann_file, train=train)  
 
     def _load_image(self, id: int) -> Image.Image:
         url = self.coco.loadImgs(id)[0]["coco_url"]
@@ -131,23 +129,9 @@ class LvisDataSet(CocoDataset):
             urlretrieve(url, file_name)
         return Image.open(file_name).convert("RGB")
 
-    def _getinfo(self, cocoinfo, img):
-        texts = ['a photo of ' + self.id2label[info['category_id']] for info in cocoinfo]
-        #  dedupe
-        texts = list(set(texts))
-        h, w = img.size
-        bboxes = []
-        for info in cocoinfo:
-            bbox = torch.Tensor(info['bbox'])*torch.tensor([1/w, 1/h, 1/w, 1/h], dtype=torch.float32)
-            bboxes.append(bbox)
-        bboxes = torch.stack(bboxes,0)
-        class_labels = [info['category_id'] for info in cocoinfo]
-        areas = [info['area'] for info in cocoinfo]
-        return texts, bboxes , class_labels, areas
-
     def __getitem__(self, idx:int):
-        img, cocoinfo = super(LvisDataSet, self).__getitem__(idx)
-        texts, bboxes, class_labels, areas = self._getinfo(cocoinfo, img)
+        img, cocoinfo = super(CocoDataset, self).__getitem__(idx)
+        texts, bboxes, class_labels, areas = super(LvisDataSet, self)._getinfo(cocoinfo, img)
         image_id = self.ids[idx]
         h, w = img.size
         
@@ -199,14 +183,19 @@ class OwlDataLoader(DataLoader):
         return batch
 
 
-
+class LvisDataLoader(OwlDataLoader):
+    def __init__(self, dataset, batch_size, num_workers, device, shuffle):
+        super(LvisDataLoader, self).__init__(
+            dataset, 
+            batch_size=batch_size , 
+            shuffle=shuffle, 
+            num_workers=num_workers,
+        )
 
 
 
 def get_owl_dataloaders(cfg, processor, device):
     train_dataset, test_dataset = get_datasets(cfg, processor)
-    print("Number of training examples:", len(train_dataset))
-    print("Number of testing examples:", len(test_dataset))
     
     train_dataloader = OwlDataLoader(train_dataset,batch_size=cfg['batch_size'], shuffle=True, num_workers=1, device=device)
     test_dataloader = OwlDataLoader(test_dataset,batch_size=cfg['batch_size'], shuffle=True, num_workers=1, device=device) 
@@ -224,5 +213,31 @@ def get_owl_datasets(cfg, processor):
                         ann_file=cfg['test_annotations_path'], 
                         train=False)
     print("Number of training examples:", len(train_dataset))
+    print("Number of testing examples:", len(test_dataset))
+    return train_dataset, test_dataset
+
+def get_lvis_dataloaders(cfg, processor, device):
+    train_dataset, test_dataset = get_lvis_datasets(cfg, processor)
+    
+    train_dataloader = LvisDataLoader(train_dataset,batch_size=cfg['batch_size'], shuffle=True, num_workers=1, device=device)
+    test_dataloader = LvisDataLoader(test_dataset,batch_size=cfg['batch_size'], shuffle=True, num_workers=1, device=device)
+
+    return train_dataloader, test_dataloader
+
+def get_lvis_datasets(cfg, processor):
+    train_dataset = LvisDataset(
+                        processor,
+                        img_folder=cfg['train_images_path'],
+                        ann_file=cfg['train_annotations_path']
+                        )
+
+    test_dataset = LvisDataset(
+                            processor,
+                            img_folder=cfg['train_images_path'],
+                            ann_file=cfg['test_annotations_path'],
+                            train=False
+                        )
+                        
+    print("Number of training examples:", len(train_dataset))   
     print("Number of testing examples:", len(test_dataset))
     return train_dataset, test_dataset
