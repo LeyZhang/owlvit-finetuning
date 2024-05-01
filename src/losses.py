@@ -25,34 +25,50 @@ class OWLVitLoss(nn.Module):
         self.weight_dict = weight_dict
         self.eos_coef = eos_coef
         self.losses_dict = losses_dict
+        self.background_label = num_classes
         empty_weight = torch.ones(self.num_classes)
-        empty_weight[-1] = self.eos_coef
-        self.register_buffer('empty_weight', empty_weight)
+        empty_weight[0] = eos_coef
+        self.class_criterion = nn.BCELoss(reduction='none', weight = empty_weight)
+
+    def _get_target_classes(self, outputs, targets, indices):
+        assert 'logits' in outputs
+        batch_idx, src_idx = self._get_src_permutation_idx(indices=indices)
+        target_classes_o = torch.cat(
+            [t['class_labels'][J].to(torch.int64)-1 for t,(_, J) in zip(targets, indices)]
+        )
+        target_classes = torch.full(
+            outputs['logits'].shape[:2], # batch, num_queries
+            self.num_classes,
+            dtype =  torch.int64,
+            device =outputs['logits'].device
+        )
+        target_classes[batch_idx, src_idx] = target_classes_o
+        return target_classes
 
     def loss_labels(self, outputs, targets, indices, num_boxes):
-        """Classification loss (NLL)
-        targets dicts must contain the key "labels" containing a tensor of dim [nb_target_boxes]
-        """
-        assert 'logits' in outputs
-        src_logits = outputs['logits']
+        target_classes = self._get_target_classes(outputs=outputs, targets=targets, indices=indices)
+        torch.save(target_classes, f'output/logs/target_classes.pt')
+        source_logits = outputs['logits'].transpose(1,2) # batch_size, num_queries,  num_patches
+        source_logits = torch.nn.Sigmoid()(source_logits)
+        # batch_size = 1
+        target_classes = target_classes.squeeze(0)
+        source_logits = source_logits.squeeze(0)
 
-        idx = self._get_src_permutation_idx(indices)
-        target_classes_o = torch.cat(
-            [t["class_labels"][J] for t, (_, J) in zip(targets, indices)]
-        ).to(torch.int64)
+        pred_logits = source_logits[:, target_classes != self.background_label].t()
+        background_logits = source_logits[:, target_classes == self.background_label].t()
+        target_classes = target_classes[target_classes != self.background_label]
 
-        target_classes = torch.full(
-                src_logits.shape[:2], #batch, num_queries
-                self.num_classes,                        
-                dtype=torch.int64, 
-                device=src_logits.device
-        ).to(torch.int64)
-        target_classes[idx] = target_classes_o
-        loss_ce = nn.NLLLoss(weight=self.empty_weight.float())(
-            src_logits.transpose(1, 2).float(), #[batch_size, num_queries, num_classes] to [batch_size,num_classes, num_queries ]
-            target_classes.long()
-        )
-        losses = {'loss_ce': loss_ce}
+        pos_targets = F.one_hot(target_classes, self.background_label).float()
+        neg_targets = torch.zeros(background_logits.shape).to(background_logits.device)
+
+        pos_loss = self.class_criterion(pred_logits, pos_targets)
+        neg_loss = self.class_criterion(background_logits, neg_targets)
+
+        pos_loss = (torch.pow(1- torch.exp(-pos_loss), 2) * pos_loss).sum(dim=1).mean()
+        neg_loss = (torch.pow(1- torch.exp(-neg_loss), 2) * neg_loss).sum(dim=1).mean()
+
+        losses= {'loss_ce': pos_loss,'loss_bg' : neg_loss}
+        
         return losses
 
     @torch.no_grad()
@@ -134,19 +150,18 @@ class OWLVitLoss(nn.Module):
              outputs: dict of tensors, see the output specification of the model for the format
              targets: list of dicts, such that len(targets) == batch_size.
                       The expected keys in each dict depends on the losses applied, see each loss' doc
-        """
+        """ 
         outputs_without_aux = {k: v for k, v in outputs.items() if k != 'aux_outputs'}
         self.check_format(outputs_without_aux, targets)
         # Retrieve the matching between the outputs of the last layer and the targets
         indices = self.matcher(outputs_without_aux, targets)
         # Compute the average number of target boxes accross all nodes, for normalization purposes
         num_boxes = sum(len(t["class_labels"]) for t in targets)
-        num_boxes = torch.as_tensor([num_boxes], dtype=torch.float, device=next(iter(outputs.values())).device)
+        num_boxes = torch.as_tensor([num_boxes], dtype=torch.float, device=outputs['logits'].device)
 
         # Compute all the requested losses
         losses = {}
         for loss_name in self.losses_dict:
             losses.update(self.get_loss(loss_name, outputs, targets, indices, num_boxes))
-        mean_loss = (losses['loss_bbox'] + losses['loss_giou']+ losses['cardinality_error']).squeeze()
-        # mean_loss = (losses['loss_ce'] + losses['loss_bbox'] + losses['loss_giou']+ losses['cardinality_error']).squeeze()
-        return mean_loss, losses
+        
+        return losses

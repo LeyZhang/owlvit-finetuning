@@ -124,6 +124,8 @@ class HungarianMatcher(nn.Module):
             For each batch element, it holds:
                 len(index_i) = len(index_j) = min(num_queries, num_target_boxes)
         """
+        # torch.save(targets,'output/logs/matcher_targets.pt')
+        # torch.save(outputs,'output/logs/matcher_outputs.pt')
         batch_size, num_queries = outputs["logits"].shape[:2]
         all_num_target_boxes = sum([len(v["boxes"]) for v in targets])
 
@@ -135,15 +137,17 @@ class HungarianMatcher(nn.Module):
         out_bbox = outputs["pred_boxes"].flatten(0, 1)  # [batch_size * num_queries, 4]
         # Also concat the target labels and boxes
         # Normalized boxes, represented as (center_x, center_y, width, height)
-        tgt_ids = torch.cat([v["class_labels"] for v in targets]).int()
+        tgt_ids = torch.cat([v["class_labels"]-1 for v in targets]).int()
         # [num_target_boxes] to [all_num_target_boxes]
         tgt_bbox = torch.cat([v["boxes"] for v in targets]) 
+        # torch.save(out_bbox, 'output/logs/out_bbox.pt')
+        # torch.save(tgt_bbox, 'output/logs/tgt_bbox.pt')
 
         # [num_target_boxes, 4] to [all_num_target_boxes, 4]
         # Compute the classification cost. Contrary to the loss, we don't use the NLL,
         # but approximate it in 1 - proba[target class].
         # The 1 is a constant that doesn't change the matching, it can be ommitted.        
-        cost_class = torch.ones(batch_size*num_queries, all_num_target_boxes).to(out_prob.device) - out_prob[:, tgt_ids] # [batch_size * num_queries, all_num_target_boxes] -> the issof target classes
+        cost_class = cost_class = torch.ones(batch_size*num_queries, all_num_target_boxes).to(out_prob.device) - out_prob[:, tgt_ids] # [batch_size * num_queries, all_num_target_boxes] -> the issof target classes
 
         # Compute the L1 cost between boxes
         # out_bbox [batch_size*num_queries, 4]
@@ -157,7 +161,6 @@ class HungarianMatcher(nn.Module):
             BoxUtils.box_cxcywh_to_xyxy(tgt_bbox)
         )
         # a [batch_size * num_queries, all_num_target_boxes] pairwise matrix
-        # cost_giou = -BoxUtils.generalized_box_iou(out_bbox,tgt_bbox)
 
         # Final cost matrix
         C = (
@@ -171,8 +174,9 @@ class HungarianMatcher(nn.Module):
         
         indices = [
             linear_sum_assignment(c[i]) for i, c in enumerate(C.split(sizes, -1))
-            # C.split(sizes, -1)，在最后一个维度进行拆分，每个拆分的分量按照每个targets里面每个boxes的个数
-            # c [batch_size , num_queries, num_target_boxes]
+            # C.split(sizes, -1)，
+            # c [batch_size , num_queries, num_target_boxes] Splits are performed in the last dimension, 
+            # and each split is divided according to the number of each boxes inside each targets
             # i batch_num - 1
         ]
         # indices list [batch_size] 
@@ -184,4 +188,3 @@ class HungarianMatcher(nn.Module):
             for i, j in indices
             # row_ind,col_ind 开销矩阵对应的行索引和最优指派的列索引
         ]
-

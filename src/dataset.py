@@ -60,6 +60,8 @@ class CocoDataset(torchvision.datasets.CocoDetection):
         img, cocoinfo = super(CocoDataset, self).__getitem__(idx)
         outputs = self.__getitem__(idx)
         annotations = self.formatted_anns(outputs['labels'])
+        texts = ['a photo of ' + self.id2label[info['category_id']] for info in cocoinfo]
+        print(texts)
         draw = ImageDraw.Draw(img, "RGBA")
         for annotation in annotations:
             box = annotation['bbox']
@@ -79,6 +81,7 @@ class OwlDataset(CocoDataset):
             categories = json.load(f)["categories"]
         self.id2label = {category["id"]: category["name"] for category in categories}
         self.label2id = {v:k for k, v in self.id2label.items()}
+        self.num_classes = len(self.id2label)
 
     def _getinfo(self, cocoinfo, img):
         texts = ['a photo of ' + self.id2label[info['category_id']] for info in cocoinfo]
@@ -118,9 +121,9 @@ class OwlDataset(CocoDataset):
         }
 
 
-class LvisDataSet(OwlDataset):
+class LvisDataset(OwlDataset):
     def __init__(self, processor, img_folder, ann_file, train=True):
-        super(LvisDataSet, self).__init__(processor, img_folder=img_folder, ann_file= ann_file, train=train)  
+        super(LvisDataset, self).__init__(processor, img_folder=img_folder, ann_file= ann_file, train=train)  
 
     def _load_image(self, id: int) -> Image.Image:
         url = self.coco.loadImgs(id)[0]["coco_url"]
@@ -131,7 +134,7 @@ class LvisDataSet(OwlDataset):
 
     def __getitem__(self, idx:int):
         img, cocoinfo = super(CocoDataset, self).__getitem__(idx)
-        texts, bboxes, class_labels, areas = super(LvisDataSet, self)._getinfo(cocoinfo, img)
+        texts, bboxes, class_labels, areas = super(LvisDataset, self)._getinfo(cocoinfo, img)
         image_id = self.ids[idx]
         h, w = img.size
         
@@ -151,7 +154,6 @@ class LvisDataSet(OwlDataset):
             "pixel_values": inputs["pixel_values"],
             "labels": labels
         }
-
 
 
 class OwlDataLoader(DataLoader):
@@ -227,14 +229,14 @@ def get_lvis_dataloaders(cfg, processor, device):
 def get_lvis_datasets(cfg, processor):
     train_dataset = LvisDataset(
                         processor,
-                        img_folder=cfg['train_images_path'],
-                        ann_file=cfg['train_annotations_path']
+                        img_folder=cfg['lvis_train_images_path'],
+                        ann_file=cfg['lvis_train_annotations_path']
                         )
 
     test_dataset = LvisDataset(
                             processor,
-                            img_folder=cfg['train_images_path'],
-                            ann_file=cfg['test_annotations_path'],
+                            img_folder=cfg['lvis_test_images_path'],
+                            ann_file=cfg['lvis_test_annotations_path'],
                             train=False
                         )
                         
